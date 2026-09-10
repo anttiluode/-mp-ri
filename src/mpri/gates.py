@@ -9,6 +9,7 @@ import numpy as np
 
 from .fluid import Probe, VortexObject, VorticityFluid2D
 from .model import FluidWeightLayer, effective_rank, interaction_residual
+from .selfwrite import episode_response, local_cross_write
 
 
 def default_layer(n: int = 28) -> FluidWeightLayer:
@@ -70,7 +71,6 @@ def gate1_weights_are_objects(layer: FluidWeightLayer) -> dict:
 def gate2_overlap_interference(layer: FluidWeightLayer) -> dict:
     f = layer.fluid
     bg = layer.background()
-    # Same-strength pulses: one overlapping pair, one well-separated pair.
     a = f.gaussian_vortex(2.75, 3.10, 0.55, 0.23)
     b_near = f.gaussian_vortex(2.98, 3.16, -0.50, 0.23)
     b_far = f.gaussian_vortex(5.55, 5.20, -0.50, 0.23)
@@ -85,19 +85,12 @@ def gate2_overlap_interference(layer: FluidWeightLayer) -> dict:
 
 def _routing_loss(layer: FluidWeightLayer, target: np.ndarray) -> float:
     transfer = layer.transfer_matrix(pulse=0.10)
-    # Fit one scalar readout gain analytically. The vortex objects must learn
-    # the routing geometry; the scalar only removes arbitrary physical units.
     scale = float(np.sum(transfer * target) / (np.sum(transfer * transfer) + 1e-12))
     return float(np.mean((scale * transfer - target) ** 2))
 
 
 def gate3_train_vortex_weights(layer: FluidWeightLayer, epochs: int = 8) -> dict:
-    """Coordinate finite-difference learning on circulation values.
-
-    This is intentionally tiny and expensive: the point is to prove that the
-    model's persistent "weights" can be physical field objects, not to compete
-    with backpropagation.
-    """
+    """Coordinate finite-difference learning on circulation values."""
     target = np.eye(len(layer.output_probes), len(layer.input_ports))
     gamma = np.array([w.circulation for w in layer.weights], dtype=float)
     start = _routing_loss(layer.with_circulations(gamma), target)
@@ -152,6 +145,98 @@ def gate4_scale_gain(layer: FluidWeightLayer) -> dict:
     return {"scales": records}
 
 
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    if denom < 1e-15:
+        return 0.0
+    return float(np.dot(a, b) / denom)
+
+
+def gate5_self_write(layer: FluidWeightLayer, epochs: int = 8) -> dict:
+    """Let a passing activation rewrite the persistent vortex objects.
+
+    Unlike Gate 3, this has no coordinate finite-difference gradient and no
+    target transfer matrix. A single probe supplies a scalar error while each
+    weight receives only a local background/fast-flow cross-energy eligibility.
+    """
+    x = np.zeros(len(layer.input_ports), dtype=float)
+    x[0] = 1.0
+    target_probe = 0
+    positive_target = 0.010
+    negative_target = -0.010
+    write_steps = 30
+    write_rate = 5000.0
+
+    before = episode_response(layer, x, steps=write_steps)
+
+    positive, history_pos = local_cross_write(
+        layer,
+        x,
+        target_probe,
+        positive_target,
+        epochs=epochs,
+        write_steps=write_steps,
+        write_rate=write_rate,
+    )
+    negative, history_neg = local_cross_write(
+        layer,
+        x,
+        target_probe,
+        negative_target,
+        epochs=epochs,
+        write_steps=write_steps,
+        write_rate=write_rate,
+    )
+
+    after_pos = episode_response(positive, x, steps=write_steps)
+    after_neg = episode_response(negative, x, steps=write_steps)
+
+    initial_gamma = np.array([w.circulation for w in layer.weights], dtype=float)
+    gamma_pos = np.array([w.circulation for w in positive.weights], dtype=float)
+    gamma_neg = np.array([w.circulation for w in negative.weights], dtype=float)
+    write_pos = gamma_pos - initial_gamma
+    write_neg = gamma_neg - initial_gamma
+
+    j0 = layer.transfer_matrix(pulse=0.12)
+    j1 = positive.transfer_matrix(pulse=0.12)
+    delta_j = j1 - j0
+
+    return {
+        "rule": {
+            "write_steps": write_steps,
+            "write_rate": write_rate,
+            "target_probe": target_probe,
+            "input": x.tolist(),
+            "description": "delta_gamma_i = eta * scalar_error * local_velocity_cross_energy",
+        },
+        "initial_response": before.tolist(),
+        "positive_target": {
+            "target": positive_target,
+            "final_response": after_pos.tolist(),
+            "initial_abs_error": float(abs(positive_target - before[target_probe])),
+            "final_abs_error": float(abs(positive_target - after_pos[target_probe])),
+            "trained_circulations": gamma_pos.tolist(),
+            "target_response_history": [
+                float(step.response[target_probe]) for step in history_pos
+            ],
+        },
+        "negative_target": {
+            "target": negative_target,
+            "final_response": after_neg.tolist(),
+            "initial_abs_error": float(abs(negative_target - before[target_probe])),
+            "final_abs_error": float(abs(negative_target - after_neg[target_probe])),
+            "trained_circulations": gamma_neg.tolist(),
+            "target_response_history": [
+                float(step.response[target_probe]) for step in history_neg
+            ],
+        },
+        "opposite_write_cosine": _cosine(write_pos, write_neg),
+        "delta_transfer_frobenius": float(np.linalg.norm(delta_j)),
+        "delta_transfer_effective_rank": effective_rank(delta_j),
+        "full_transfer_effective_rank": effective_rank(j0),
+    }
+
+
 def run_all(n: int = 28, train_epochs: int = 8) -> dict:
     layer = default_layer(n=n)
     return {
@@ -169,6 +254,7 @@ def run_all(n: int = 28, train_epochs: int = 8) -> dict:
         "gate2_overlap_interference": gate2_overlap_interference(layer),
         "gate3_train_vortex_weights": gate3_train_vortex_weights(layer, epochs=train_epochs),
         "gate4_scale_gain": gate4_scale_gain(layer),
+        "gate5_self_write": gate5_self_write(layer, epochs=train_epochs),
     }
 
 
