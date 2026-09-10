@@ -15,6 +15,7 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 mpri-gates = "mpri.gates:main"
+mpri-organism = "mpri.organism_demo:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
