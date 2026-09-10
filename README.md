@@ -1,4 +1,4 @@
-# -mp-ri — it's all buckets
+# -mp-ri — it's all buckets (Ämpäri - Finnish for bucket, but Ä does not work as repo name) 
 
 A tiny falsifiable prototype of a **fluid computer whose persistent weights are objects in the flow**.
 
