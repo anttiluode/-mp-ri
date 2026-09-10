@@ -16,5 +16,20 @@ Default run: `grid=28`, `dt=0.012`, viscosity `0.003`, drag `0.01`.
 | G4 | enstrophy gain with background, `k=1` | `1.06983×` |
 | G4 | enstrophy gain with background, `k=5` | `0.99053×` |
 | G4 | enstrophy gain with background, `k=6` | `0.97184×` |
+| G5 | target response, before | `-0.001356` |
+| G5 | target response, after +target self-write | **`+0.005627`** |
+| G5 | absolute target error, before | `0.011356` |
+| G5 | absolute target error, after | **`0.004373`** |
+| G5 | cosine(+target write, -target write) | **`-0.801`** |
+| G5 | effective rank of self-written `ΔJ` | `1.270` |
+| G5 | Frobenius norm of self-written `ΔJ` | `0.018739` |
+
+Gate 5 uses an added local plasticity law
+
+```text
+delta_gamma_i = eta * scalar_error * local_velocity_cross_energy_i
+```
+
+rather than a finite-difference gradient. The scalar error is global, but the eligibility term is measured locally around each persistent vortex object. This is a mechanism probe, not a claim that Navier–Stokes itself performs learning.
 
 These are receipts for this toy configuration, not general fluid-computing claims. Re-run `python -m mpri.gates` to regenerate them.
